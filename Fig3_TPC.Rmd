@@ -1,0 +1,191 @@
+---
+title: "Fronds_TPC"
+output: html_document
+date: "2024-03-02"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE, echo=TRUE, comment="", message=FALSE)
+rm(list=ls())
+library(nls.multstart)
+```
+
+# Load in original data
+```{r}
+Wolffia <- read.csv("WGdataset_AoBPlants.csv")
+str(Wolffia)
+
+Wolffia <- subset(Wolffia, Treatment =="constant",)
+
+Wolffia$Frond_count <- Wolffia$Frond_count_1 + Wolffia$Frond_count_2 + Wolffia$Frond_count_3
+Wolffia$Dead_count <- Wolffia$Dead_frond_count_1 + Wolffia$Dead_frond_count_2 + Wolffia$Dead_frond_count_3
+Wolffia$grow=(log(Wolffia$Frond_count)-log(12))/5
+
+```
+
+## Define TPCS
+
+```{r}
+biere2 <- function(temp, tmin, tmax, a, b){
+  est <- (a*temp*(temp - tmin))*(tmax-temp)^(1/b)
+  return(est)
+}
+```
+
+```{r}
+quad <- function(temp,a, b, c){
+  est <- a+b*temp+c*temp^2
+  return(est)
+}
+```
+
+
+```{r}
+
+ratkowsky_new2 <- function(temp, tmin, tmax, a, b){
+  est <-( (a * (temp - tmin))^1 * (1 - exp(b * (temp - tmax))))
+  return(est)
+}
+```
+
+
+## Fit TPC to rel growth rate
+
+
+```{r}
+# Fit mod Ratowsky
+coefs=c(tmn = 5,
+    tmx = max(Wolffia$Mean_temperature, na.rm = TRUE),
+    a = 1.5,
+    b = 1.1)
+
+low_coefs=c(tmin = -15,
+    tmax = min(Wolffia$Mean_temperature, na.rm = TRUE),
+    a = -.5,
+    b = -1)
+
+out=nls_multstart(grow~ratkowsky_new2(temp = Mean_temperature, tmin, tmax, a, b),
+data = Wolffia,
+iter = c(4,4,4,4),
+start_lower = coefs-.10,
+start_upper = coefs+.10,
+lower = low_coefs,
+#upper = coefs,
+supp_errors = 'Y',
+convergence_count = FALSE)
+
+newdata <- data.frame(Mean_temperature = seq(min(Wolffia$Mean_temperature)-5, max(Wolffia$Mean_temperature)+5, length.out = 100))
+
+D_test = data.frame(Mean_temperature = c(0:40)) 
+p_l_test_R = predict(out, newdata = D_test)
+
+estcoef=round(summary(out)$coefficients[,1], 2)
+
+```
+
+
+## Biere2
+
+```{r}
+# Fit Biere2
+coefs=c(tmn = 5,
+    tmx = max(Wolffia$Mean_temperature, na.rm = TRUE),
+    a = 1.5,
+    b = 1.1)
+
+low_coefs=c(tmin = -15,
+    tmax = min(Wolffia$Mean_temperature, na.rm = TRUE),
+    a = -.5,
+    b = -1.0)
+
+out=nls_multstart(grow~biere2(temp = Mean_temperature, tmin, tmax, a, b),
+data = Wolffia,
+iter = c(4,4,4,4),
+start_lower = coefs-.10,
+start_upper = coefs+.10,
+lower = low_coefs,
+#upper = coefs,
+supp_errors = 'Y',
+convergence_count = FALSE)
+
+newdata <- data.frame(Mean_temperature = seq(min(Wolffia$Mean_temperature)-5, max(Wolffia$Mean_temperature)+5, length.out = 100))
+
+D_test = data.frame(Mean_temperature = c(0:40)) 
+p_l_test_B = predict(out, newdata = D_test)
+
+estcoef=round(summary(out)$coefficients[,1], 2)
+
+```
+
+# Quad
+
+
+```{r}
+# Fit quadratic
+coefs=c(
+    a = 2,
+    b = 2,
+    c=1)
+
+low_coefs=c(
+    a = -2,
+    b = -2,
+    c=-1)
+
+out=nls_multstart(grow~quad(temp=Mean_temperature, a, b,c),
+data = Wolffia,
+iter = c(4,4,4),
+start_lower = coefs-.10,
+start_upper = coefs+.10,
+lower = low_coefs,
+#upper = coefs,
+supp_errors = 'N',
+convergence_count = FALSE)
+
+newdata <- data.frame(Mean_temperature = seq(min(Wolffia$Mean_temperature)-5, max(Wolffia$Mean_temperature)+5, length.out = 100))
+
+D_test = data.frame(Mean_temperature = c(0:40)) 
+p_l_test_q = predict(out, newdata = D_test)
+
+
+estcoef=round(summary(out)$coefficients[,1], 2)
+
+```
+
+
+```{r, fig.height=7}
+par(mar=c(5,5,0,0))
+jpeg(filename = "Fig3_TPCs.jpeg", 
+     width = 8, 
+     height = 9, 
+     units = "cm", 
+     res = 600)
+
+# add noise to dataframe using jitter 
+# function
+jit_mean <- jitter(Wolffia$Mean_temperature, 0.5)
+
+plot(x=jit_mean, y=Wolffia$grow,  xlab = 'Temperature (ºC)',bg=rgb(.7,.7,.7, alpha=.7),pch=21,cex=.8,lwd=.5,
+       ylab = 'Relative growth rate per day', bty="l", xlim=c(10,40), ylim=c(-.2, .5),
+     cex.axis=.9,
+     cex.lab=1., las=1)
+
+lines(y=p_l_test_q , x=c(0:40),col="#994F00", lwd=2, lty=2)
+lines(y=p_l_test_R , x=c(0:40),col="#005AB5", lwd=2,lty=1 )
+lines(y=p_l_test_B , x=c(0:40),col="#DC3220", lwd=2, lty=3)
+
+
+
+# add legend
+legend("bottom", legend=c("data","Ratkowsky", "Biere2", "quadratic" ), col=c(1,"#005AB5", "#DC3220", "#994F00"), 
+       pt.bg=c(rgb(.7,.7,.7, alpha=.7), NA,NA,NA),
+       bty='n', 
+       cex=.6, pch=c(21,NA, NA,NA), lty=c(NA, 1,3,2),lwd=c(0.5,1.5,1.5,1.5), #inset=.05
+       )
+
+
+dev.off()
+```
+
+
+
